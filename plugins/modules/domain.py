@@ -28,7 +28,7 @@ options:
         description: The domain to modify
     record_type:
         required: false
-        description: The DNS record type (A, CNAME, TXT, AAAA, NS, SRV, MX, , DKIM, SPF)
+        description: The DNS record type (A, CNAME, TXT, AAAA, NS, SRV, MX, DKIM, SPF)
     state:
         required: false
         description: The state
@@ -108,30 +108,6 @@ def run_module():
                     module.fail_json(
                         msg="Failed to call OVH API: {0}".format(api_error))
 
-            # Gatekeeper: if more than one record match the query,
-            # don't update anything and fail
-            if len(existing_records) > 1:
-                module.fail_json(
-                    msg="More than one record match the name {} in domain {}, this module won't update all of these records.".format(name, domain))
-
-            # Update the record if needed:
-            try:
-                ind = existing_records[0]
-                client.put(
-                    '/domain/zone/%s/record/%s' % (domain, ind),
-                    subDomain=name,
-                    target=value
-                )
-                # we must run a refresh on zone after modifications
-                client.post(
-                    '/domain/zone/%s/refresh' % domain
-                )
-                module.exit_json(
-                    msg="{} record has been updated: {} is now targeting {}.{}".format(record_type, value, name, domain), changed=True)
-            except APIError as api_error:
-                module.fail_json(
-                    msg="Failed to call OVH API: {0}".format(api_error))
-
         # The record does not exist yet
         try:
             client.post(
@@ -163,18 +139,27 @@ def run_module():
                 record = client.get(
                     '/domain/zone/%s/record/%s' % (domain, ind)
                 )
-                client.delete(
-                    '/domain/zone/%s/record/%s' % (domain, ind)
-                )
-                # we must run a refresh on zone after modifications
-                client.post(
-                    '/domain/zone/%s/refresh' % domain
-                )
-                record_deleted.append("%s IN %s %s" % (
-                    record.get('subDomain'), record.get('fieldType'), record.get('target')))
-            module.exit_json(
-                msg=",".join(record_deleted) + " successfuly deleted from domain {}".format(domain),
-                changed=True)
+                
+                if record['subDomain'] == name and record['target'] == value:
+                    client.delete(
+                        '/domain/zone/%s/record/%s' % (domain, ind)
+                    )
+                    # we must run a refresh on zone after modifications
+                    client.post(
+                        '/domain/zone/%s/refresh' % domain
+                    )
+                    record_deleted.append("%s IN %s %s" % (
+                        record.get('subDomain'), record.get('fieldType'), record.get('target')))
+
+            if len(record_deleted) > 0 :
+                module.exit_json(
+                    msg=",".join(record_deleted) + " successfuly deleted from domain {}".format(domain),
+                    changed=True)
+            else:
+                module.exit_json(
+                    msg="Target {} doesn't exist on domain {}".format(
+                        name, domain),
+                    changed=False)
         except APIError as api_error:
             module.fail_json(
                 msg="Failed to call OVH API: {0}".format(api_error))
